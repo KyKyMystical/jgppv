@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bomba Papa vs Valentina</title>
+<link href="https://fonts.googleapis.com/css2?family=Bungee&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e8eeea;--ink:#17323a;--muted:#4c6a68;--p1:#1a86ad;--p2:#d6385a;--card:#d3dfd9;
+ box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10252b;--ink:#e4f0ec;--muted:#93b0ab;--p1:#4cc9f0;--p2:#ff6b81;--card:#183840}}
+:root[data-theme="dark"]{--bg:#10252b;--ink:#e4f0ec;--muted:#93b0ab;--p1:#4cc9f0;--p2:#ff6b81;--card:#183840}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Trebuchet MS",Verdana,sans-serif;display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px}
+h1{font-family:Bungee,Impact,sans-serif;font-weight:400;font-size:clamp(24px,5vw,38px);margin:0;letter-spacing:.02em}
+#hud{font-family:Bungee,Impact,sans-serif;font-size:clamp(18px,4vw,26px);display:flex;gap:14px;align-items:center}
+canvas{width:auto;height:auto;max-width:100%;max-height:78vh;border-radius:10px;background:#2b4e58;display:block}
+.keys{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;width:min(100%,720px)}
+.keys div{flex:1 1 260px;background:var(--card);border-radius:8px;padding:10px 14px;font-size:14px;line-height:1.5;color:var(--muted)}
+.keys b{color:var(--ink)}
+.keys .a{border-left:5px solid var(--p1)}.keys .b{border-left:5px solid var(--p2)}
+body{overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+/* controlos de toque (só aparecem em telemóvel/tablet, durante o jogo) */
+#touch{position:fixed;left:0;right:0;bottom:0;display:none;justify-content:space-between;align-items:flex-end;padding:14px 18px calc(14px + env(safe-area-inset-bottom,0px));pointer-events:none;z-index:5}
+.tgrp{display:flex;gap:14px;align-items:flex-end;pointer-events:none}
+.tpad,.tbomb{pointer-events:auto;touch-action:none}
+.tpad{width:140px;height:140px;border-radius:50%;background:rgba(16,37,43,.45);border:2px solid rgba(255,255,255,.5);display:flex;align-items:center;justify-content:center}
+.tknob{width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.7);pointer-events:none}
+.tbomb{width:84px;height:84px;border-radius:50%;background:rgba(255,140,66,.85);border:2px solid rgba(255,255,255,.7);display:flex;align-items:center;justify-content:center;font-size:36px}
+#touch.duo .tpad{width:110px;height:110px}#touch.duo .tknob{width:44px;height:44px}#touch.duo .tbomb{width:66px;height:66px;font-size:28px}
+#tmenu{position:fixed;top:calc(8px + env(safe-area-inset-top,0px));right:10px;width:44px;height:44px;border-radius:10px;background:rgba(16,37,43,.75);color:#fff;font-size:22px;display:none;align-items:center;justify-content:center;z-index:6}
+body.touch .keys{display:none}
+body.touch{padding:6px;gap:4px}
+body.touch h1{font-size:18px}
+body.touch canvas{max-height:calc(100dvh - 64px)}
+</style>
+</head>
+<body>
+<h1>Bomba Papa vs Valentina</h1>
+<div id="hud"><span style="color:var(--p1)">Papa</span><span id="s0">0</span><span>:</span><span id="s1">0</span><span style="color:var(--p2)">Valentina</span></div>
+<canvas id="c" width="840" height="760"></canvas>
+<div class="keys">
+ <div class="a"><b>Papa</b><br>Mover: W A S D<br>Bomba: Espaço</div>
+ <div class="b"><b>Valentina</b><br>Mover: setas<br>Bomba: Enter</div>
+</div>
+<div class="keys"><div id="legend" style="border:0"></div></div>
+<script>
+const T=40,W=21,H=19,HB=13,cv=document.getElementById('c'),g=cv.getContext('2d');
+const keys={};
+// ===== MAPA: W e H têm de ser números ímpares (ex.: 21x19, 29x25) =====
+cv.width=W*T;cv.height=H*T;
+const NENEMIES=6; // número de inimigos
+const WINS=3; // rondas que é preciso ganhar (2 = melhor de 3, 3 = melhor de 5)
+const BOSSHP=3; // vida do boss em cada forma (verde e depois vermelho)
+
+// ===== POWER-UPS (uma linha por skill) =====
+// l = letra que aparece, c = cor, n = nome na legenda, w = frequência (maior = mais comum)
+// bad:true = skill má, fx = o que acontece quando o jogador apanha
+const ITEMS=[
+ {l:'2x',c:'#ffd166',n:'mais uma bomba',w:2,fx:p=>p.maxB=Math.min(6,p.maxB+1)},
+ {l:'+',c:'#ef476f',n:'mais alcance',w:2,fx:p=>p.range=Math.min(8,p.range+1)},
+ {l:'V',c:'#06d6a0',n:'mais velocidade',w:1,fx:p=>p.spd=Math.min(230,p.spd+20)},
+ {l:'++',c:'#ff8c42',n:'bombas perfurantes',w:1,fx:p=>p.pierce=true},
+ {l:'T',c:'#fff275',n:'turbo (super rápido durante 6 segundos)',w:1,fx:p=>p.turbo=6},
+ {l:'−',c:'#a99bdc',n:'menos alcance',w:1,bad:true,fx:p=>p.range=Math.max(1,p.range-1)},
+ {l:'L',c:'#a99bdc',n:'mais lento',w:1,bad:true,fx:p=>p.spd=Math.max(90,p.spd-25)},
+ {l:'♥',c:'#ff4d6d',n:'vida extra (cai do boss)',w:0,fx:p=>p.lives++} // w:0 = nunca sai das caixas
+];
+const HEART=ITEMS.length-1; // posição do coração na lista
+const POOL=ITEMS.flatMap((it,i)=>Array(it.w).fill(i));
+document.getElementById('legend').innerHTML='Power-ups: '+ITEMS.filter(i=>!i.bad).map(i=>'<b>'+i.l+'</b> '+i.n).join(', ')+'. Cuidado com os maus: '+ITEMS.filter(i=>i.bad).map(i=>'<b>'+i.l+'</b> '+i.n).join(' e ')+'. Foge dos monstros verdes! Ganha quem vencer '+WINS+' rondas. Em Jogador vs Jogador a ronda decisiva tem um boss. Nos modos 1 jogador e amigos, mata todos os monstros e depois o boss! v12';
+
+const ALL=[
+  //editarplayers 
+  //col é a cor do jogador (código hexadecimal).
+  //k são as teclas: cima, baixo, esquerda, direita e bomba.
+  //sx e sy são a posição inicial na grelha.
+ {name:'Papa',col:'#4cc9f0',k:{u:'KeyW',d:'KeyS',l:'KeyA',r:'KeyD',b:'Space'},sx:1,sy:1},
+ {name:'Valentina',col:'#ff6b81',k:{u:'ArrowUp',d:'ArrowDown',l:'ArrowLeft',r:'ArrowRight',b:'NumpadEnter'},sx:W-2,sy:H-2}
+];
+let P=ALL;
+let grid,bombs,flames,items,enemies,boss=null,state='menu',msg='',mode='pvp',bossOn=false,banner={t:0},menuSel=0,optSel=0,pickSel=0,soloIdx=0,lastTick=-1,hidden={},progCleared=false,level=1,lvlWon=false,menuHit=[],endT=0,score=[0,0],clock=0;
+
+function reset(keep){
+  grid=[];
+  for(let y=0;y<H;y++){grid[y]=[];for(let x=0;x<W;x++){
+    const wall=x==0||y==0||x==W-1||y==H-1||(x%2==0&&y%2==0);
+    const spawn=P.some(p=>Math.abs(x-p.sx)+Math.abs(y-p.sy)<=2);
+    grid[y][x]=wall?1:(!spawn&&Math.random()<.72?2:0);
+  }}
+  hidden={};
+  { // escolhe as caixas que escondem um power-up (as outras não largam nada)
+    const cr=[];for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(grid[y][x]==2)cr.push([x,y]);
+    const n=mode=='pvp'?PVP_ITEMS:ITEMS_PER_LEVEL[0]+Math.floor(Math.random()*(ITEMS_PER_LEVEL[1]-ITEMS_PER_LEVEL[0]+1));
+    for(let i=0;i<n&&cr.length;i++){const [x,y]=cr.splice(Math.floor(Math.random()*cr.length),1)[0];const pl=mode=='pvp'?POOL:GOODPOOL;hidden[x+','+y]=pl[Math.floor(Math.random()*pl.length)];}
+  }
+  bombs=[];flames=[];items=[];enemies=[];bossOn=false;banner={t:0};
+  P.forEach(p=>{p.x=(p.sx+.5)*T;p.y=(p.sy+.5)*T;p.alive=true;if(!keep){p.maxB=1;p.range=2;p.spd=150;p.pierce=false;p.lives=0;}p.turbo=0;p.inv=0;p.free=[];p.dir='h';});spawnEnemies();
+  state='play';
+  //maxB é o número de bombas ao mesmo tempo.
+  //range é o alcance da explosão.
+  //spd é a velocidade (150 é o normal, 230 é o máximo).
+  //pierce=true faz o jogador começar com bombas perfurantes.
+}
+function updHud(){
+  const h=document.getElementById('hud');let t;
+  if(MENUSTATES.includes(state))t='';
+  else if(mode=='pvp')t='<span style="color:var(--p1)">'+ALL[0].name+'</span><span>'+score[0]+'</span><span>:</span><span>'+score[1]+'</span><span style="color:var(--p2)">'+ALL[1].name+'</span>';
+  else t='Nível '+level+' - '+(bossOn?'Boss!':'Monstros: '+enemies.length)+' - ♥ '+P.map(p=>p.lives).join('/')+' ('+(mode=='solo'?'1 jogador':'2 jogadores amigos')+')';
+  if(h.dataset.t!==t){h.innerHTML=t;h.dataset.t=t;}
+}
+
+// ===== INIMIGOS =====
+function spawnEnemies(){
+  boss=null;
+  const cells=[];
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)
+    if(grid[y][x]==0&&P.every(p=>Math.abs(x-p.sx)+Math.abs(y-p.sy)>7))cells.push([x,y]);
+  for(let i=0;i<enemyCount()&&cells.length;i++){
+    const [x,y]=cells.splice(Math.floor(Math.random()*cells.length),1)[0];
+    enemies.push({x:(x+.5)*T,y:(y+.5)*T,tx:x,ty:y,dx:0,dy:0,spd:mode=='pvp'?55:Math.min(110,48+level*3)}); // spd = velocidade do inimigo (sobe com o nível)
+  }
+  if(mode=='pvp'&&score[0]==WINS-1&&score[1]==WINS-1)spawnBoss(); // ronda decisiva = boss
+}
+function spawnBoss(){
+  {
+    let cx=(W-1)/2,cy=(H-1)/2;if(cx%2==0&&cy%2==0)cx++;
+    [[0,0],[1,0],[-1,0],[0,1],[0,-1]].forEach(([a,b])=>{if(grid[cy+b][cx+a]==2)grid[cy+b][cx+a]=0;});
+    const tier=mode=='pvp'?1:Math.max(1,Math.floor(level/LVL_BOSS)); // quantas vezes o boss já ficou mais forte
+    const hpm=BOSSHP+(tier-1)*2;                  // +2 de vida por cada 10 níveis
+    const n20=mode=='pvp'?0:Math.floor(level/LVL_BOMBER);
+    boss={x:(cx+.5)*T,y:(cy+.5)*T,tx:cx,ty:cy,dx:0,dy:0,spd:50+(tier-1)*8,spd2:85+(tier-1)*8,chase:.3,hp:hpm,hpMax:hpm,form:'green',inv:0,rev:1.5,
+      bomber:n20>=1,bt:3,bint:Math.max(1.2,4-n20*.8),brange:2+n20}; // bomber = põe bombas, bint = segundos entre bombas, brange = alcancebanner={t:2.5,txt:'BOSS!'};
+  }
+}
+function freeE(x,y){return x>=0&&y>=0&&x<W&&y<H&&grid[y][x]==0&&!bombs.some(b=>b.x==x&&b.y==y);}
+function stepEnemy(e,dt){
+  let d=e.spd*dt;
+  while(d>0){
+    const tx=(e.tx+.5)*T,ty=(e.ty+.5)*T,dist=Math.abs(tx-e.x)+Math.abs(ty-e.y);
+    if(dist>d){e.x+=Math.sign(tx-e.x)*d;e.y+=Math.sign(ty-e.y)*d;return;}
+    e.x=tx;e.y=ty;d-=dist;
+    let o=[[1,0],[-1,0],[0,1],[0,-1]].filter(([a,b])=>freeE(e.tx+a,e.ty+b));
+    if(!o.length)return;
+    const nr=o.filter(([a,b])=>!(a==-e.dx&&b==-e.dy));if(nr.length)o=nr;
+    const fw=o.find(([a,b])=>a==e.dx&&b==e.dy);
+    let n=fw&&Math.random()<.75?fw:o[Math.floor(Math.random()*o.length)];
+    const al=P.filter(p=>p.alive);
+    if(e.chase&&Math.random()<e.chase&&al.length){
+      const t=al.reduce((m,p)=>Math.hypot(p.x-e.x,p.y-e.y)<Math.hypot(m.x-e.x,m.y-e.y)?p:m);
+      const dd=c=>Math.hypot(t.x-(e.tx+c[0]+.5)*T,t.y-(e.ty+c[1]+.5)*T);
+      n=o.reduce((m,c)=>dd(c)<dd(m)?c:m);
+    }
+    e.dx=n[0];e.dy=n[1];e.tx+=e.dx;e.ty+=e.dy;
+  }
+}
+function solid(cx,cy,p){
+  if(cx<0||cy<0||cx>=W||cy>=H||grid[cy][cx]>0)return true;
+  return bombs.some(b=>b.x==cx&&b.y==cy&&!p.free.includes(b));
+}
+function blocked(p,nx,ny){
+  return [[-1,-1],[1,-1],[-1,1],[1,1]].some(([a,b])=>solid(Math.floor((nx+a*HB)/T),Math.floor((ny+b*HB)/T),p));
+}
+function mv(p,a,b,s,d){
+  const n=p[a]+s*d,t={x:p.x,y:p.y};t[a]=n;
+  if(!blocked(p,t.x,t.y)){p[a]=n;return;}
+  const ax=p[a]+s*(HB+1);
+  const ahead=a=='x'?solid(Math.floor(ax/T),Math.floor(p.y/T),p):solid(Math.floor(p.x/T),Math.floor(ax/T),p);
+  if(!ahead){ // desliza para o centro da linha para facilitar curvas
+    const df=(Math.floor(p[b]/T)+.5)*T-p[b];
+    p[b]+=Math.sign(df)*Math.min(d,Math.abs(df));
+  }
+}
+function drop(p){
+  if(net.role=='guest'){if(net.conn&&net.conn.open)net.conn.send({t:'bomb'});return;} // o amigo pede a bomba ao anfitrião
+  const x=Math.floor(p.x/T),y=Math.floor(p.y/T);
+  if(bombs.filter(b=>b.o==p).length>=p.maxB||bombs.some(b=>b.x==x&&b.y==y))return;
+  const b={x,y,t:2,range:p.range,pierce:p.pierce,o:p};bombs.push(b);p.free.push(b);sfx('drop');
+}
+function fl(x,y,e,o){flames.push({x,y,t:.5,e,o});if(mode=='pvp')items=items.filter(i=>!(i.x==x&&i.y==y)); // no PvP o fogo destrói power-ups (faz parte da estratégia); nos níveis não
+}
+function boom(b){
+  sfx('boom');bombs.splice(bombs.indexOf(b),1);fl(b.x,b.y,b.boss,b.o);
+  for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){
+    for(let i=1;i<=b.range;i++){
+      const x=b.x+dx*i,y=b.y+dy*i,c=grid[y][x];
+      if(c==1)break;
+      fl(x,y,b.boss,b.o);
+      if(c==2){grid[y][x]=0;dropItem(x,y);if(!b.pierce)break;}
+      const o=bombs.find(o=>o.x==x&&o.y==y);
+      if(o){o.t=0;break;}
+    }
+  }
+}
+function update(dt){
+  clock+=dt;
+  bombs.forEach(b=>b.t-=dt);
+  bombs.filter(b=>b.t<=0).forEach(b=>{if(bombs.includes(b))boom(b);});
+  flames.forEach(f=>f.t-=dt);flames=flames.filter(f=>f.t>0);
+  enemies.forEach(e=>stepEnemy(e,dt));
+  enemies=enemies.filter(e=>!flames.some(f=>!f.e&&f.x==Math.floor(e.x/T)&&f.y==Math.floor(e.y/T)));
+  if(boss){
+    if(boss.rev>0)boss.rev-=dt; // a ressuscitar: parado e inofensivo
+    else{
+      stepEnemy(boss,dt);
+      if(boss.bomber){ // boss que põe bombas
+        boss.bt-=dt;
+        if(boss.bt<=0){
+          boss.bt=boss.bint;
+          const bx=Math.floor(boss.x/T),by=Math.floor(boss.y/T);
+          if(!bombs.some(b=>b.x==bx&&b.y==by)){bombs.push({x:bx,y:by,t:2,range:boss.brange,pierce:false,o:boss,boss:true});sfx('drop');}
+        }
+      }
+      if(boss.inv>0)boss.inv-=dt;
+      else if(flames.some(f=>!f.e&&f.x==Math.floor(boss.x/T)&&f.y==Math.floor(boss.y/T))){
+        boss.hp--;boss.inv=1;
+        if(boss.hp<=0){
+          if(boss.form=='green'){boss.form='red';boss.hp=boss.hpMax;boss.spd=boss.spd2;boss.chase=.6;boss.rev=2;boss.inv=1;sfx('bosshit');} // volta vermelho
+          else{items.push({x:Math.floor(boss.x/T),y:Math.floor(boss.y/T),k:HEART});boss=null;sfx('boss');} // o boss larga um coração
+        }
+      }
+    }
+  }
+  P.forEach(p=>{
+    if(!p.alive)return;
+    const k=p.k,K=p.remote?rkeys:keys; // jogador remoto = teclas que chegam do outro telemóvel
+    let dx=(K[k.r]?1:0)-(K[k.l]?1:0),dy=(K[k.d]?1:0)-(K[k.u]?1:0);
+    if(dx&&dy){if(p.dir=='h')dy=0;else dx=0;}
+    if(p.turbo>0)p.turbo-=dt;
+    const d=p.spd*(p.turbo>0?1.6:1)*dt;
+    if(dx)mv(p,'x','y',dx,d);else if(dy)mv(p,'y','x',dy,d);
+    p.free=p.free.filter(b=>bombs.includes(b)&&Math.abs(p.x-(b.x+.5)*T)<T/2+HB&&Math.abs(p.y-(b.y+.5)*T)<T/2+HB);
+    const cx=Math.floor(p.x/T),cy=Math.floor(p.y/T);
+    if(p.inv>0)p.inv-=dt; // tempo de proteção depois de renascer
+    if(flames.some(f=>f.x==cx&&f.y==cy&&!(SND.friendly&&mode=='coop'&&f.o&&f.o!==p&&P.includes(f.o))))p.alive=false; // bomba amigável: o fogo do parceiro não te mata
+    if(enemies.some(e=>Math.hypot(e.x-p.x,e.y-p.y)<24))p.alive=false;
+    if(boss&&boss.rev<=0&&Math.hypot(boss.x-p.x,boss.y-p.y)<28)p.alive=false;
+    if(!p.alive){ // vida extra: renasce no ponto de partida com 2,5 s de proteção
+      if(p.inv>0)p.alive=true;
+      else if(p.lives>0){p.lives--;p.alive=true;p.inv=2.5;p.x=(p.sx+.5)*T;p.y=(p.sy+.5)*T;p.free=bombs.slice();sfx('win');}
+    }
+    const it=items.find(i=>i.x==cx&&i.y==cy);
+    if(it){items.splice(items.indexOf(it),1);ITEMS[it.k].fx(p);sfx(ITEMS[it.k].bad?'bad':'item');}
+  });
+  if(mode=='pvp'&&state=='play'&&P.filter(p=>p.alive).length<2){
+    state='over';endT=2.2;
+    const w=P.findIndex(p=>p.alive);
+    if(w<0)msg='Empate!';else{score[w]++;msg=P[w].name+' ganhou a ronda!';sfx('win');}
+  }
+  if(mode!='pvp'&&state=='play'){
+    if(!P.some(p=>p.alive)){state='over';endT=2.5;lvlWon=false;msg=(P.length>1?'Perderam':'Perdeste')+' no nível '+level+'!';sfx('lose');}
+    else if(!enemies.length){ // só se passa de nível com TODOS os monstros mortos
+      if(level%LVL_BOSS==0&&!bossOn){bossOn=true;spawnBoss();} // nível de boss: depois dos monstros vem o boss
+      else if(level%LVL_BOSS!=0||(bossOn&&!boss)){state='over';endT=LEVEL_WAIT;lastTick=-1;lvlWon=true;msg='Nível '+level+' completo!';sfx('win');}
+    }
+  }
+  if(banner.t>0)banner.t-=dt;
+  if(state=='over'){
+    endT-=dt;
+    if(lvlWon){const c=Math.ceil(endT);if(c!=lastTick&&c>0){lastTick=c;sfx('tick');}} // 'tic' a cada segundo
+    if(endT<=0){
+      if(mode!='pvp'){
+        if(lvlWon){lvlWon=false;level++;reset(true);saveProg();banner={t:2.5,txt:'Nível '+level+(level%LVL_BOSS==0?' - vem aí um boss!':'')};} // próximo nível (mantém os power-ups)
+        else state='match';
+      }
+      else if(score[0]>=WINS||score[1]>=WINS){state='match';msg=P[score[0]>=WINS?0:1].name+' venceu o jogo!';}
+      else reset();
+    }
+  }
+}
+
+function draw(){
+  g.save();
+  if(camOn()){ // câmara que segue o jogador (zoom)
+    const me=net.role=='guest'?ALL[1]:P[0],z=CAM_ZOOM,vw=cv.width/z,vh=cv.height/z;
+    const camX=Math.min(Math.max(me.x,vw/2),W*T-vw/2),camY=Math.min(Math.max(me.y,vh/2),H*T-vh/2);
+    g.translate(cv.width/2,cv.height/2);g.scale(z,z);g.translate(-camX,-camY);
+  }
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const c=grid[y][x],px=x*T,py=y*T;
+    g.fillStyle=(x+y)%2?'#2f5560':'#2b4e58';g.fillRect(px,py,T,T);
+    if(c==1){g.fillStyle='#7f9c95';g.fillRect(px,py,T,T);g.fillStyle='#a9c4bd';g.fillRect(px,py,T,T-5);}
+    if(c==2){g.fillStyle='#8f5e22';g.fillRect(px+2,py+2,T-4,T-4);g.fillStyle='#c98a3d';g.fillRect(px+4,py+4,T-8,T-8);
+      g.strokeStyle='#8f5e22';g.lineWidth=3;g.beginPath();g.moveTo(px+6,py+6);g.lineTo(px+T-6,py+T-6);g.moveTo(px+T-6,py+6);g.lineTo(px+6,py+T-6);g.stroke();}
+  }
+  g.textAlign='center';g.textBaseline='middle';g.font='bold 16px Verdana,sans-serif';
+  items.forEach(i=>{
+    const cx=(i.x+.5)*T,cy=(i.y+.5)*T;
+    g.fillStyle=ITEMS[i.k].c;g.beginPath();g.arc(cx,cy,13,0,7);g.fill();
+    g.fillStyle='#17323a';g.fillText(ITEMS[i.k].l,cx,cy+1);
+  });
+  bombs.forEach(b=>{
+    const cx=(b.x+.5)*T,cy=(b.y+.5)*T,s=1+Math.sin(clock*(b.t<.8?30:10))*.08;
+    g.fillStyle=b.boss?'#6a1b9a':b.pierce?'#7a1030':'#0d1a1e';g.beginPath();g.arc(cx,cy+2,14*s,0,7);g.fill();
+    g.fillStyle='#ffd166';g.beginPath();g.arc(cx+8,cy-11,3+Math.sin(clock*40)*1.2,0,7);g.fill();
+  });
+  flames.forEach(f=>{
+    const px=f.x*T,a=Math.min(1,f.t*4);
+    g.globalAlpha=a;g.fillStyle='#ff8c42';g.fillRect(px+3,f.y*T+3,T-6,T-6);
+    g.fillStyle='#ffe28a';g.fillRect(px+10,f.y*T+10,T-20,T-20);g.globalAlpha=1;
+  });
+  enemies.forEach(e=>{
+    const w=Math.sin(clock*8+e.x)*2;
+    g.fillStyle='rgba(0,0,0,.25)';g.beginPath();g.ellipse(e.x,e.y+13,13,5,0,0,7);g.fill();
+    g.fillStyle='#7bc043';g.beginPath();g.arc(e.x,e.y-2,14+w*.4,Math.PI,0);g.lineTo(e.x+14,e.y+11);g.lineTo(e.x-14,e.y+11);g.fill();
+    g.fillStyle='#fff';g.fillRect(e.x-8,e.y-7,6,6);g.fillRect(e.x+2,e.y-7,6,6);
+    g.fillStyle='#17323a';g.fillRect(e.x-6,e.y-5,3,4);g.fillRect(e.x+4,e.y-5,3,4);
+  });
+  if(boss&&(boss.rev<=0||Math.floor(clock*10)%2)){
+    const c=boss.form=='green'?'#3fa34d':'#e63946',w=Math.sin(clock*6)*2,x=boss.x,y=boss.y;
+    g.fillStyle='rgba(0,0,0,.3)';g.beginPath();g.ellipse(x,y+17,22,7,0,0,7);g.fill();
+    g.globalAlpha=boss.inv>0?.55:1;
+    g.fillStyle=c;g.beginPath();g.arc(x,y-3,22+w*.4,Math.PI,0);g.lineTo(x+22,y+16);g.lineTo(x-22,y+16);g.fill();
+    g.fillStyle='#fff';g.fillRect(x-14,y-10,11,10);g.fillRect(x+3,y-10,11,10);
+    g.fillStyle='#17323a';g.fillRect(x-9,y-7,5,7);g.fillRect(x+4,y-7,5,7);
+    g.strokeStyle='#17323a';g.lineWidth=3;g.beginPath();g.moveTo(x-16,y-15);g.lineTo(x-3,y-10);g.moveTo(x+16,y-15);g.lineTo(x+3,y-10);g.stroke();
+    g.globalAlpha=1;
+    g.fillStyle='rgba(0,0,0,.5)';g.fillRect(x-22,y-36,44,7);g.fillStyle='#fff';g.fillRect(x-21,y-35,42*boss.hp/boss.hpMax,5); // barra de vida
+  }
+  P.forEach(p=>{//editar modelo dos bonecos g.arc(p.x,p.y,15,0,7) 15 é o raio
+    if(!p.alive)return;
+    if(p.inv>0&&Math.floor(clock*10)%2)return; // pisca quando está protegido
+    g.fillStyle='rgba(0,0,0,.25)';g.beginPath();g.ellipse(p.x,p.y+13,13,5,0,0,7);g.fill();
+    g.fillStyle=p.col;g.beginPath();g.arc(p.x,p.y,15,0,7);g.fill();
+    if(p.turbo>0){g.strokeStyle='#fff275';g.lineWidth=3;g.beginPath();g.arc(p.x,p.y,19,0,7);g.stroke();}
+    g.fillStyle='#fff';g.beginPath();g.arc(p.x-5,p.y-3,4,0,7);g.arc(p.x+5,p.y-3,4,0,7);g.fill();
+    g.fillStyle='#17323a';g.beginPath();g.arc(p.x-5,p.y-3,1.8,0,7);g.arc(p.x+5,p.y-3,1.8,0,7);g.fill();
+    if(p.lives>0){g.fillStyle='#ff4d6d';g.font='bold 13px Verdana,sans-serif';g.fillText('♥'+p.lives,p.x,p.y-25);} // vidas extra por cima do jogador
+  });
+  g.restore();
+  drawOverlay();
+}
+
+addEventListener('keydown',e=>{
+  if(e.code.startsWith('Arrow')||e.code=='Space'||e.code=='Enter')e.preventDefault();
+  if(e.repeat)return;
+  keys[e.code]=true;
+  audioInit();
+  if(MENUSTATES.includes(state)){menuKey(e.code);return;}
+  if(e.code=='Escape'){if(net.role)leaveNet();else state='menu';return;}
+  if(state=='match'){if(net.role!='guest'&&(e.code=='Space'||e.code=='Enter'||e.code=='NumpadEnter'))startMode(mode);return;}
+  P.forEach(p=>{
+    if(p.remote)return; // jogador do outro telemóvel
+    const k=p.k;
+    if(e.code==k.b&&p.alive)drop(p);
+    if(e.code==k.l||e.code==k.r)p.dir='h';
+    if(e.code==k.u||e.code==k.d)p.dir='v';
+  });
+});
+addEventListener('keyup',e=>{keys[e.code]=false;});
+addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
+
+// ===== SOM (gerado no código, não precisa de ficheiros) =====
+const SND={music:true,sfx:true,mv:.7,sv:.8,friendly:true}; // mv = volume da música, sv = volume dos efeitos
+try{Object.assign(SND,JSON.parse(localStorage.getItem('bpvv')||'{}'));}catch(e){}
+let AC=null,mGain,sGain,NB,lastBoom=0,mStep=0,mNext=0,mTimer=null;
+function saveSnd(){try{localStorage.setItem('bpvv',JSON.stringify(SND));}catch(e){}}
+function applyVol(){if(!AC)return;mGain.gain.value=SND.music?SND.mv*.35:0;sGain.gain.value=SND.sfx?SND.sv:0;}
+function audioInit(){
+  try{
+    if(!AC){
+      AC=new(window.AudioContext||window.webkitAudioContext)();
+      mGain=AC.createGain();sGain=AC.createGain();mGain.connect(AC.destination);sGain.connect(AC.destination);
+      const n=AC.sampleRate,b=AC.createBuffer(1,n,AC.sampleRate),d=b.getChannelData(0);
+      for(let i=0;i<n;i++)d[i]=Math.random()*2-1;
+      NB=b;applyVol();
+    }
+    if(AC.state=='suspended')AC.resume();
+    startMusic();
+  }catch(e){}
+}
+function tone(f,t,dur,type,vol,f2,dest){
+  const o=AC.createOscillator(),a=AC.createGain();
+  o.type=type;o.frequency.setValueAtTime(f,t);
+  if(f2)o.frequency.exponentialRampToValueAtTime(f2,t+dur);
+  a.gain.setValueAtTime(vol,t);a.gain.exponentialRampToValueAtTime(.001,t+dur);
+  o.connect(a);a.connect(dest||sGain);o.start(t);o.stop(t+dur+.05);
+}
+function boomSnd(t,big){
+  const s=AC.createBufferSource(),fl2=AC.createBiquadFilter(),a=AC.createGain();
+  s.buffer=NB;fl2.type='lowpass';
+  fl2.frequency.setValueAtTime(big?2000:1300,t);fl2.frequency.exponentialRampToValueAtTime(80,t+.55);
+  a.gain.setValueAtTime(big?1:.7,t);a.gain.exponentialRampToValueAtTime(.001,t+.6);
+  s.connect(fl2);fl2.connect(a);a.connect(sGain);s.start(t);s.stop(t+.65);
+  tone(110,t,.4,'sine',.8,40);
+}
+// sfx('nome'): boom=explosão, drop=pôr bomba, item=power-up, bad=power-up mau,
+// win=vitória, lose=derrota, bosshit=boss perde uma forma, boss=boss derrotado
+function sfx(n){ // toca aqui e, se for o anfitrião online, também no telemóvel do amigo
+  if(net.role=='host'&&net.conn&&net.conn.open)net.conn.send({t:'s',n});
+  sfxLocal(n);
+}
+function sfxLocal(n){
+  if(!AC||!SND.sfx)return;
+  const t=AC.currentTime;
+  if(n=='boom'){if(t-lastBoom<.06)return;lastBoom=t;boomSnd(t);}
+  else if(n=='drop')tone(220,t,.08,'square',.25,110);
+  else if(n=='tick')tone(880,t,.08,'square',.2);
+  else if(n=='item'){tone(660,t,.08,'square',.25);tone(990,t+.08,.14,'square',.25);}
+  else if(n=='bad')tone(300,t,.25,'sawtooth',.25,100);
+  else if(n=='win')[523,659,784,1047].forEach((f,i)=>tone(f,t+i*.14,.3,'triangle',.5));
+  else if(n=='lose')[392,330,262,196].forEach((f,i)=>tone(f,t+i*.2,.35,'sawtooth',.25));
+  else if(n=='bosshit'){boomSnd(t);tone(300,t,.5,'sawtooth',.4,60);}
+  else if(n=='boss'){boomSnd(t,1);tone(400,t,.9,'sawtooth',.4,50);[523,659,784,1047,1319].forEach((f,i)=>tone(f,t+.5+i*.12,.35,'triangle',.5));}
+}
+// música de fundo: baixo + melodia (números = semitonos, -1 = pausa). Fica mais rápida com o boss.
+const BASS=[0,0,7,0,5,5,3,3,0,0,7,0,10,10,8,7];
+const MEL=[12,-1,15,-1,19,-1,15,-1,17,-1,15,-1,12,-1,10,-1,12,-1,15,-1,19,-1,22,-1,20,-1,19,-1,15,-1,17,-1];
+function musicTick(){
+  if(!AC)return;
+  const sp=boss?.1:.14;
+  while(mNext<AC.currentTime+.25){
+    tone(55*2**(BASS[mStep%16]/12),mNext,sp*1.6,'triangle',.5,0,mGain);
+    const m=MEL[mStep%32];
+    if(m>=0)tone(220*2**(m/12),mNext,sp*1.2,'square',.1,0,mGain);
+    mNext+=sp;mStep++;
+  }
+  mTimer=setTimeout(musicTick,80);
+}
+function startMusic(){if(mTimer||!AC)return;mNext=AC.currentTime+.1;musicTick();}
+
+// ===== NÍVEIS (modos 1 Jogador e Amigos) =====
+const ITEMS_PER_LEVEL=[1,2]; // power-ups escondidos por nível: [mínimo, máximo]
+const PVP_ITEMS=3;           // máximo de power-ups por ronda no Jogador vs Jogador
+const LEVEL_WAIT=5;          // segundos de contagem antes do próximo nível
+const GOODPOOL=POOL.filter(i=>!ITEMS[i].bad); // nos níveis só saem power-ups bons (no PvP saem todos, também os maus)
+function dropItem(x,y){ // o que uma caixa larga ao ser destruída
+  if(hidden[x+','+y]!==undefined){items.push({x,y,k:hidden[x+','+y]});delete hidden[x+','+y];}
+}
+// ===== PROGRESSO GUARDADO (fica no navegador): nível + power-ups de cada modo =====
+let PROG={};try{PROG=JSON.parse(localStorage.getItem('bpvv_prog')||'{}');}catch(e){}
+function progKey(){return mode=='solo'?'solo'+soloIdx:'coop';} // solo0 = Papa, solo1 = Valentina, coop
+function writeProg(){try{localStorage.setItem('bpvv_prog',JSON.stringify(PROG));}catch(e){}}
+function saveProg(){ // guarda no início de cada nível
+  PROG[progKey()]={lv:level,st:P.map(p=>({maxB:p.maxB,range:p.range,spd:p.spd,pierce:p.pierce,lives:p.lives}))};
+  writeProg();
+}
+const LVL_BOSS=10;   // de 10 em 10 níveis há um boss (cada vez com mais vida e mais rápido)
+const LVL_BOMBER=20; // a partir deste nível o boss também põe bombas (e fica pior de 20 em 20 níveis)
+function enemyCount(){ // quantos monstros há em cada nível
+  if(mode=='pvp')return NENEMIES;
+  return Math.min(25,2+level*2+(mode=='coop'?4:0)); // 2 + 2 por nível (+4 no co-op), máximo 25
+}
+
+// ===== CÂMARA (telemóvel): segue o jogador com zoom =====
+const CAM_ZOOM=1.9; // maior = mais perto
+function camOn(){return IS_TOUCH&&(mode=='solo'||!!net.role);} // só no telemóvel, em 1 jogador e online
+
+// ===== SALA ONLINE (2 Jogadores Amigos em 2 telemóveis) =====
+// O anfitrião corre o jogo todo e envia o estado; o amigo envia só os controlos (usa PeerJS, WebRTC).
+const net={role:null,peer:null,conn:null,code:'',ready:false,last:0,lastIn:''}; // role: null | 'host' | 'guest'
+let netMsg='';
+const rkeys={}; // controlos do jogador remoto (no anfitrião)
+const MENUSTATES=['menu','options','pick','coopsel','host','join'];
+const COOPSEL=['Neste dispositivo (2 jogadores)','Criar sala online','Entrar numa sala online','Voltar'];
+function pickAct(i){
+  if(state=='pick'){if(i<2)startMode('solo',i);else state='menu';}
+  else if(i==0)startMode('coop');else if(i==1)hostRoom();else if(i==2)joinRoom();else state='menu';
+}
+function loadPeer(cb){ // carrega a biblioteca PeerJS (precisa de internet)
+  if(window.Peer)return cb();
+  const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
+  sc.onload=cb;sc.onerror=()=>netLost('Sem internet: não foi possível ligar ao serviço de salas.');
+  document.head.appendChild(sc);
+}
+function leaveNet(){
+  const c=net.conn,p=net.peer;net.conn=null;net.peer=null;net.role=null;net.ready=false;
+  try{c&&c.close();}catch(e){}try{p&&p.destroy();}catch(e){}
+  ALL.forEach(a=>a.remote=false);for(const k in rkeys)delete rkeys[k];
+  for(const k in keys)keys[k]=false;
+  state='menu';
+}
+function netLost(t){leaveNet();netMsg=t;}
+function hostRoom(){ // criar sala: gera um código de 4 letras
+  audioInit();netMsg='';state='host';net.role='host';net.ready=false;
+  loadPeer(()=>{
+    net.code=Math.random().toString(36).slice(2,6).toUpperCase();
+    const pr=net.peer=new Peer('bpvv-'+net.code);
+    pr.on('open',()=>{net.ready=true;});
+    pr.on('error',e=>netLost('Erro na sala ('+(e.type||e)+'). Tenta outra vez.'));
+    pr.on('connection',c=>{
+      if(net.conn&&net.conn.open){c.close();return;}
+      net.conn=c;
+      const go=()=>{ALL[1].remote=true;ALL[0].remote=false;startMode('coop');c.send({t:'start'});}; // o amigo entrou: começa o jogo
+      if(c.open)go();else c.on('open',go);
+      c.on('data',onHostData);
+      c.on('close',()=>{if(net.conn===c)netLost('O amigo saiu da sala.');});
+    });
+  });
+}
+function joinRoom(){ // entrar na sala com o código do amigo
+  const code=(prompt('Código da sala (4 letras):')||'').trim().toUpperCase();
+  if(!code)return;
+  audioInit();netMsg='';state='join';net.role='guest';net.code=code;
+  loadPeer(()=>{
+    const pr=net.peer=new Peer();
+    pr.on('error',e=>netLost(e.type=='peer-unavailable'?'Sala não encontrada. Confirma o código.':'Não foi possível entrar ('+(e.type||e)+').'));
+    pr.on('open',()=>{
+      const c=net.conn=pr.connect('bpvv-'+code,{reliable:true});
+      c.on('data',onGuestData);
+      c.on('close',()=>{if(net.conn===c)netLost('A sala fechou.');});
+      setTimeout(()=>{if(state=='join'&&net.conn===c)netLost('A sala não respondeu.');},12000);
+    });
+  });
+}
+function onHostData(m){ // anfitrião recebe os controlos do amigo
+  const k=ALL[1].k;
+  if(m.t=='in'){rkeys[k.u]=m.u;rkeys[k.d]=m.d;rkeys[k.l]=m.l;rkeys[k.r]=m.r;ALL[1].dir=m.dir;}
+  else if(m.t=='bomb'&&(state=='play'||state=='over')&&ALL[1].alive)drop(ALL[1]);
+}
+function onGuestData(m){ // amigo recebe o estado do anfitrião
+  if(m.t=='start'){mode='coop';P=ALL;ALL[0].remote=true;ALL[1].remote=false;state='play';setupTouch();}
+  else if(m.t=='s')sfxLocal(m.n);
+  else if(m.t=='snap')applySnap(m);
+}
+function sendSnap(){
+  net.conn.send({t:'snap',g:grid.map(r=>r.join('')).join(''),
+    b:bombs.map(b=>[b.x,b.y,+b.t.toFixed(2),b.boss?1:0,b.pierce?1:0]),f:flames.map(f=>[f.x,f.y,+f.t.toFixed(2)]),
+    i:items.map(i=>[i.x,i.y,i.k]),e:enemies.map(e=>[Math.round(e.x),Math.round(e.y)]),
+    bo:boss&&{x:Math.round(boss.x),y:Math.round(boss.y),form:boss.form,hp:boss.hp,hpMax:boss.hpMax,rev:boss.rev,inv:boss.inv},bOn:bossOn?1:0,
+    p:ALL.map(p=>[Math.round(p.x),Math.round(p.y),p.alive?1:0,p.lives,+p.inv.toFixed(1),+p.turbo.toFixed(1)]),
+    st:state,m:msg,eT:+endT.toFixed(1),lv:level,lw:lvlWon?1:0,bn:banner});
+}
+function applySnap(m){
+  grid=[];for(let y=0;y<H;y++){grid[y]=[];for(let x=0;x<W;x++)grid[y][x]=+m.g[y*W+x];}
+  bombs=m.b.map(a=>({x:a[0],y:a[1],t:a[2],boss:a[3],pierce:a[4]}));
+  flames=m.f.map(a=>({x:a[0],y:a[1],t:a[2]}));
+  items=m.i.map(a=>({x:a[0],y:a[1],k:a[2]}));
+  enemies=m.e.map(a=>({x:a[0],y:a[1]}));
+  boss=m.bo||null;bossOn=!!m.bOn;
+  m.p.forEach((a,i)=>{const p=ALL[i];p.tx=a[0];p.ty=a[1];if(Math.hypot(p.x-a[0],p.y-a[1])>80){p.x=a[0];p.y=a[1];}p.alive=!!a[2];p.lives=a[3];p.inv=a[4];p.turbo=a[5];});
+  state=m.st;msg=m.m;endT=m.eT;level=m.lv;lvlWon=!!m.lw;banner=m.bn;
+}
+function guestTick(dt){ // amigo: anima, suaviza movimentos e envia os controlos
+  clock+=dt;
+  ALL.forEach(p=>{if(p.tx!==undefined){const f=Math.min(1,dt*20);p.x+=(p.tx-p.x)*f;p.y+=(p.ty-p.y)*f;}});
+  if(!net.conn||!net.conn.open||(state!='play'&&state!='over'))return;
+  const k=ALL[1].k,m={t:'in',u:!!keys[k.u],d:!!keys[k.d],l:!!keys[k.l],r:!!keys[k.r],dir:ALL[1].dir},j=JSON.stringify(m);
+  if(j!=net.lastIn){net.lastIn=j;net.conn.send(m);}
+}
+
+// ===== CONTROLOS DE TOQUE (telemóvel/tablet) =====
+const IS_TOUCH=(()=>{try{return matchMedia('(pointer:coarse)').matches||'ontouchstart' in window;}catch(e){return false;}})();
+if(IS_TOUCH)document.body.classList.add('touch');
+let tEl=null,tMenu=null;
+function mkPad(p){ // joystick: dedo para a esquerda/direita/cima/baixo = teclas do jogador
+  const d=document.createElement('div'),k=document.createElement('div');
+  d.className='tpad';k.className='tknob';d.appendChild(k);
+  const set=(u,dn,l,r)=>{const c=p.k;keys[c.u]=u;keys[c.d]=dn;keys[c.l]=l;keys[c.r]=r;};
+  const mv=e=>{
+    const b=d.getBoundingClientRect(),x=e.clientX-b.left-b.width/2,y=e.clientY-b.top-b.height/2,m=Math.hypot(x,y),max=b.width/2;
+    const kx=m>max?x/m*max:x,ky=m>max?y/m*max:y;
+    k.style.transform='translate('+kx+'px,'+ky+'px)';
+    if(m<max*.25){set(false,false,false,false);return;} // zona morta no centro
+    if(Math.abs(x)>Math.abs(y)){set(false,false,x<0,x>0);p.dir='h';}else{set(y<0,y>0,false,false);p.dir='v';}
+  };
+  const up=()=>{k.style.transform='';set(false,false,false,false);};
+  d.addEventListener('pointerdown',e=>{e.preventDefault();audioInit();d.setPointerCapture(e.pointerId);mv(e);});
+  d.addEventListener('pointermove',e=>{if(d.hasPointerCapture(e.pointerId))mv(e);});
+  d.addEventListener('pointerup',up);d.addEventListener('pointercancel',up);
+  return d;
+}
+function mkBomb(p){ // botão da bomba
+  const b=document.createElement('div');b.className='tbomb';b.textContent='💣';
+  b.addEventListener('pointerdown',e=>{e.preventDefault();audioInit();if((state=='play'||state=='over')&&p.alive)drop(p);});
+  return b;
+}
+function setupTouch(){ // 1 jogador: joystick à esquerda + bomba à direita. 2 jogadores: cada um tem o seu lado.
+  if(!IS_TOUCH)return;
+  if(!tEl){
+    tEl=document.createElement('div');tEl.id='touch';document.body.appendChild(tEl);
+    tMenu=document.createElement('div');tMenu.id='tmenu';tMenu.textContent='☰'; // botão para voltar ao menu
+    tMenu.addEventListener('pointerdown',()=>{for(const k in keys)keys[k]=false;if(net.role)leaveNet();else state='menu';});
+    document.body.appendChild(tMenu);
+  }
+  for(const k in keys)keys[k]=false;
+  tEl.innerHTML='';const one=mode=='solo'||net.role,me=net.role=='guest'?ALL[1]:P[0]; // online: cada telemóvel controla só o seu jogador
+  tEl.className=one?'solo':'duo';
+  const L=document.createElement('div'),R=document.createElement('div');L.className='tgrp';R.className='tgrp';
+  if(one){L.appendChild(mkPad(me));R.appendChild(mkBomb(me));}
+  else{L.appendChild(mkPad(P[0]));L.appendChild(mkBomb(P[0]));R.appendChild(mkBomb(P[1]));R.appendChild(mkPad(P[1]));}
+  tEl.append(L,R);
+}
+function touchShow(){ // só mostra os controlos durante o jogo
+  if(!tEl)return;
+  const on=state=='play'||state=='over';
+  tEl.style.display=on?'flex':'none';tMenu.style.display=on?'flex':'none';
+}
+
+// ===== MENU =====
+const MENU=['1 Jogador','2 Jogadores Amigos','Jogador vs Jogador','Opções'];
+function optItems(){return[
+  'Música: '+(SND.music?'Ligada':'Desligada'),
+  'Volume da música: '+Math.round(SND.mv*100)+'%',
+  'Efeitos: '+(SND.sfx?'Ligados':'Desligados'),
+  'Volume dos efeitos: '+Math.round(SND.sv*100)+'%',
+  'Bomba amigável (co-op): '+(SND.friendly?'Ligada':'Desligada'),
+  progCleared?'Progresso apagado!':'Apagar progresso guardado',
+  'Voltar'];}
+function startMode(m,ci){
+  if(ci!==undefined)soloIdx=ci;
+  mode=m;P=m=='solo'?[ALL[soloIdx]]:ALL;score=[0,0];lvlWon=false;
+  const pr=m=='pvp'?null:PROG[progKey()];level=pr?pr.lv:1; // continua no nível onde ficaste
+  document.querySelector('.keys .a').style.display=(m=='solo'&&soloIdx==1)?'none':'';
+  document.querySelector('.keys .b').style.display=(m=='solo'&&soloIdx==0)?'none':'';
+  reset();
+  if(pr)P.forEach((p,i)=>{if(pr.st&&pr.st[i])Object.assign(p,pr.st[i]);}); // recupera os power-ups guardados
+  if(m!='pvp'){banner={t:2.5,txt:'Nível '+level+(level%LVL_BOSS==0?' - vem aí um boss!':': elimina todos os monstros!')};saveProg();}
+  updHud();setupTouch();
+}
+function menuAct(i){
+  if(i==0){state='pick';pickSel=0;}else if(i==1){state='coopsel';pickSel=0;netMsg='';}else if(i==2)startMode('pvp');else{state='options';progCleared=false;}
+}
+function optAdj(i,d){
+  if(i==0)SND.music=!SND.music;
+  else if(i==2)SND.sfx=!SND.sfx;
+  else if(i==1||i==3){const k=i==1?'mv':'sv';SND[k]=d?Math.min(1,Math.max(0,Math.round((SND[k]+d*.1)*10)/10)):(SND[k]>=1?0:Math.round((SND[k]+.1)*10)/10);}
+  else if(i==4)SND.friendly=!SND.friendly;
+  else if(i==5){PROG={};writeProg();progCleared=true;} // volta tudo ao nível 1
+  else state='menu';
+  applyVol();saveSnd();if(i==2||i==3)sfx('item');
+}
+function menuKey(c){
+  if(state=='host'||state=='join'){if(c=='Escape'){leaveNet();netMsg='';}return;}
+  const ok=c=='Enter'||c=='Space'||c=='NumpadEnter',up=c=='ArrowUp'||c=='KeyW',dn=c=='ArrowDown'||c=='KeyS',lf=c=='ArrowLeft'||c=='KeyA',rt=c=='ArrowRight'||c=='KeyD';
+  if(state=='menu'){
+    if(up)menuSel=(menuSel+MENU.length-1)%MENU.length;
+    if(dn)menuSel=(menuSel+1)%MENU.length;
+    if(ok)menuAct(menuSel);
+  }else if(state=='pick'||state=='coopsel'){
+    const n=state=='pick'?3:4;
+    if(c=='Escape'){state='menu';return;}
+    if(up)pickSel=(pickSel+n-1)%n;
+    if(dn)pickSel=(pickSel+1)%n;
+    if(ok)pickAct(pickSel);
+  }else{
+    if(c=='Escape'){state='menu';return;}
+    if(up)optSel=(optSel+6)%7;
+    if(dn)optSel=(optSel+1)%7;
+    if(lf||rt)optAdj(optSel,rt?1:-1);
+    if(ok)optAdj(optSel,0);
+  }
+}
+function btn(t,i,y,sel,cx){
+  const w=520,h=52,x=cx-w/2;
+  g.fillStyle=sel?'#ffd166':'rgba(255,255,255,.14)';g.fillRect(x,y,w,h);
+  g.fillStyle=sel?'#17323a':'#fff';g.font='22px Bungee,Impact,sans-serif';g.fillText(t,cx,y+h/2+1);
+  menuHit.push([x,y,w,h,i]);
+}
+function drawOverlay(){
+  g.textAlign='center';g.textBaseline='middle'; // o restore() da câmara repõe o alinhamento, por isso define-se aqui
+  menuHit=[];const cx=W*T/2,cy=H*T/2;
+  if(state=='play'){
+    if(banner.t>0){g.fillStyle='rgba(16,37,43,.75)';g.fillRect(0,40,W*T,60);g.fillStyle='#fff';g.font='28px Bungee,Impact,sans-serif';g.fillText(banner.txt,cx,70);}
+    return;
+  }
+  if(state=='host'||state=='join'){ // sala online: à espera / a ligar
+    g.fillStyle='rgba(16,37,43,.92)';g.fillRect(0,0,W*T,H*T);
+    g.fillStyle='#fff';g.font='34px Bungee,Impact,sans-serif';g.fillText(state=='host'?'Sala online':'A entrar na sala...',cx,cy-150);
+    if(state=='host'){
+      g.font='bold 18px Verdana,sans-serif';g.fillText(net.ready?'Diz este código ao teu amigo:':'A criar a sala...',cx,cy-90);
+      if(net.ready){g.fillStyle='#ffd166';g.font='90px Bungee,Impact,sans-serif';g.fillText(net.code,cx,cy-10);}
+      g.fillStyle='#a9c4bd';g.font='bold 16px Verdana,sans-serif';g.fillText('À espera que o amigo entre...',cx,cy+60);
+    }else{g.font='bold 20px Verdana,sans-serif';g.fillText('Código: '+net.code,cx,cy-60);}
+    if(netMsg){g.fillStyle='#ff8fa3';g.font='bold 16px Verdana,sans-serif';g.fillText(netMsg,cx,cy+95);}
+    btn('Cancelar',0,cy+120,true,cx);
+    return;
+  }
+  if(['menu','options','pick','coopsel'].includes(state)){
+    g.fillStyle='rgba(16,37,43,.92)';g.fillRect(0,0,W*T,H*T);
+    g.fillStyle='#fff';g.font='46px Bungee,Impact,sans-serif';g.fillText('Bomba',cx,cy-250);
+    g.fillStyle='#ffd166';g.font='30px Bungee,Impact,sans-serif';g.fillText(state=='pick'?'Escolhe o teu jogador':state=='coopsel'?'2 Jogadores Amigos':'Papa vs Valentina',cx,cy-200);
+    const L=state=='menu'?MENU.map((t,i)=>i==1&&PROG.coop&&PROG.coop.lv>1?t+' (nível '+PROG.coop.lv+')':t):state=='coopsel'?COOPSEL:state=='pick'?ALL.map((p,i)=>p.name+(PROG['solo'+i]&&PROG['solo'+i].lv>1?' - nível '+PROG['solo'+i].lv:'')).concat('Voltar'):optItems(),sel=state=='menu'?menuSel:(state=='pick'||state=='coopsel')?pickSel:optSel;
+    L.forEach((t,i)=>btn(t,i,cy-120+i*(L.length>6?56:62),i==sel,cx));
+    g.fillStyle='#a9c4bd';g.font='bold 15px Verdana,sans-serif';
+    g.fillText(IS_TOUCH?'Toca numa opção':state=='options'?'W/S escolhem, A/D ou setas mudam o volume, Esc volta':'W/S ou setas para escolher, Enter ou Espaço para confirmar',cx,cy+305);
+    if(netMsg&&state!='options'){g.fillStyle='#ff8fa3';g.font='bold 16px Verdana,sans-serif';g.fillText(netMsg,cx,cy+270);}
+    return;
+  }
+  if(state=='over'&&lvlWon){ // contagem decrescente para o próximo nível
+    g.fillStyle='rgba(16,37,43,.78)';g.fillRect(0,cy-120,W*T,240);
+    g.fillStyle='#fff';g.font='34px Bungee,Impact,sans-serif';g.fillText(msg,cx,cy-80);
+    g.font='bold 18px Verdana,sans-serif';g.fillText('Próximo nível em',cx,cy-40);
+    g.fillStyle='#ffd166';g.font=Math.round(90-30*(Math.ceil(endT)-endT))+'px Bungee,Impact,sans-serif';g.fillText(Math.max(1,Math.ceil(endT)),cx,cy+25);
+    if(items.some(i=>i.k==HEART)){g.fillStyle='#ff8fa3';g.font='bold 18px Verdana,sans-serif';g.fillText('Apanha o coração ♥ para ganhares uma vida extra!',cx,cy+95);}
+    return;
+  }
+  g.fillStyle='rgba(16,37,43,.72)';g.fillRect(0,cy-70,W*T,140);
+  g.fillStyle='#fff';g.font='34px Bungee,Impact,sans-serif';
+  const sub=state=='match'?(net.role=='guest'?'À espera do anfitrião...':IS_TOUCH?'Toca no ecrã para jogar de novo':'Espaço ou Enter: jogar de novo. Esc: menu'):'';
+  g.fillText(msg,cx,cy-(sub?16:0));
+  if(sub){g.font='bold 17px Verdana,sans-serif';g.fillText(sub,cx,cy+28);}
+}
+cv.addEventListener('click',ev=>{
+  audioInit();
+  if(state=='match'){if(net.role!='guest')startMode(mode);return;} // toque no ecrã = jogar de novo
+  if(!MENUSTATES.includes(state))return;
+  const r=cv.getBoundingClientRect(),x=(ev.clientX-r.left)*cv.width/r.width,y=(ev.clientY-r.top)*cv.height/r.height;
+  const h=menuHit.find(([a,b,w,hh])=>x>=a&&x<=a+w&&y>=b&&y<=b+hh);
+  if(!h)return;
+  const i=h[4];
+  if(state=='host'||state=='join'){leaveNet();netMsg='';return;} // botão Cancelar
+  if(state=='menu'){menuSel=i;menuAct(i);}
+  else if(state=='pick'||state=='coopsel'){pickSel=i;pickAct(i);}
+  else{optSel=i;optAdj(i,(i==1||i==3)?(x<cv.width/2?-1:1):0);}
+});
+
+mode='pvp';reset();state='menu';
+let last=performance.now();
+(function loop(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  if(net.role=='guest')guestTick(dt); // o amigo só desenha o que o anfitrião envia
+  else if(state=='play'||state=='over')update(dt);
+  if(net.role=='host'&&net.conn&&net.conn.open&&now-net.last>50&&(state=='play'||state=='over'||state=='match')){net.last=now;sendSnap();} // 20 vezes por segundo
+  updHud();touchShow();draw();requestAnimationFrame(loop);
+})(last);
+</script>
+</body>
+</html>
